@@ -1,0 +1,3 @@
+name: talos-aws-pulumi
+runtime: go
+description: A Pulumi program in Go to stand up a Talos Linux cluster on AWS
