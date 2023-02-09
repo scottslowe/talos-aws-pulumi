@@ -243,6 +243,7 @@ func main() {
 			ClusterName:    pulumi.String("talos-cluster"),
 			MachineSecrets: talosMachineSecrets.MachineSecrets,
 			Endpoints:      pulumi.StringArray(cpInstancePubIps),
+			Nodes:          pulumi.StringArray{cpInstancePubIps[0]},
 		})
 		if err != nil {
 			log.Printf("error creating client configuration: %s", err.Error())
