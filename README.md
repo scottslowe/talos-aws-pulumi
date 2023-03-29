@@ -1,6 +1,6 @@
 # Standing up a Talos Linux Cluster on AWS Using Pulumi
 
-This repository contains a Pulumi program, written in Golang, to automate the process of standing up a Talos Linux cluster on AWS.
+This repository contains a [Pulumi](https://www.pulumi.com) program, written in Golang, to automate the process of standing up a [Talos Linux](https://talos.dev) cluster on AWS.
 
 ## Prerequisites
 
