@@ -21,8 +21,17 @@ func main() {
 			vpcNetworkCidr = "10.0.0.0/16"
 		}
 		talosAmi := cfg.Require("talosAmi")
+		ownerTagValue, err := config.Try(ctx, "ownerTagValue")
+		if err != nil {
+			ownerTagValue = "nobody@nowhere.com"
+		}
+		teamTagValue, err := config.Try(ctx, "teamTagValue")
+		if err != nil {
+			teamTagValue = "TeamOfOne"
+		}
 
 		// Create a new VPC, subnets, and associated infrastructure
+		// Details: https://www.pulumi.com/registry/packages/awsx/api-docs/ec2/vpc/
 		talosVpc, err := awsx.NewVpc(ctx, "talosVpc", &awsx.VpcArgs{
 			EnableDnsHostnames: pulumi.Bool(true),
 			EnableDnsSupport:   pulumi.Bool(true),
@@ -31,7 +40,9 @@ func main() {
 				Strategy: awsx.NatGatewayStrategySingle,
 			},
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("talosVpc"),
+				"Name":  pulumi.String("talosVpc"),
+				"Owner": pulumi.String(ownerTagValue),
+				"Team":  pulumi.String(teamTagValue),
 			},
 		})
 		if err != nil {
@@ -43,12 +54,15 @@ func main() {
 		ctx.Export("talosPubSubnetIds", talosVpc.PublicSubnetIds)
 
 		// Create a security group for the Talos cluster
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/securitygroup/
 		talosSg, err := ec2.NewSecurityGroup(ctx, "talosSg", &ec2.SecurityGroupArgs{
 			Name:        pulumi.String("talosSg"),
 			VpcId:       talosVpc.VpcId,
 			Description: pulumi.String("Security group for the Talos cluster"),
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("talosSg"),
+				"Name":  pulumi.String("talosSg"),
+				"Owner": pulumi.String(ownerTagValue),
+				"Team":  pulumi.String(teamTagValue),
 			},
 		})
 		if err != nil {
@@ -58,6 +72,7 @@ func main() {
 		ctx.Export("talosSgId", talosSg.ID())
 
 		// Add rules to Talos security group
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/securitygrouprule/
 		// First, allow all traffic within the security group
 		_, err = ec2.NewSecurityGroupRule(ctx, "allowAllTalosSg", &ec2.SecurityGroupRuleArgs{
 			Type:                  pulumi.String("ingress"),
@@ -120,7 +135,9 @@ func main() {
 			VpcId:       talosVpc.VpcId,
 			Description: pulumi.String("Security group for the Talos load balancer"),
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("talosLbSg"),
+				"Name":  pulumi.String("talosLbSg"),
+				"Owner": pulumi.String(ownerTagValue),
+				"Team":  pulumi.String(teamTagValue),
 			},
 		})
 		if err != nil {
@@ -172,6 +189,7 @@ func main() {
 		}
 
 		// Create a load balancer
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/elb/loadbalancer/
 		talosLb, err := elb.NewLoadBalancer(ctx, "talosLb", &elb.LoadBalancerArgs{
 			Name: pulumi.String("talosLb"),
 			Listeners: elb.LoadBalancerListenerArray{
@@ -185,7 +203,9 @@ func main() {
 			SecurityGroups: pulumi.StringArray{talosLbSg.ID()},
 			Subnets:        talosVpc.PublicSubnetIds,
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("talosLb"),
+				"Name":  pulumi.String("talosLb"),
+				"Owner": pulumi.String(ownerTagValue),
+				"Team":  pulumi.String(teamTagValue),
 			},
 		})
 		if err != nil {
@@ -197,6 +217,7 @@ func main() {
 		ctx.Export("talosLbId", talosLb.ID())
 
 		// Launch EC2 instances for the control plane nodes
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/instance/
 		cpInstanceIds := make([]pulumi.StringInput, 3)
 		cpInstancePrivIps := make([]pulumi.StringInput, 3)
 		cpInstancePubIps := make([]pulumi.StringInput, 3)
@@ -207,7 +228,9 @@ func main() {
 				InstanceType:             pulumi.String("m5a.xlarge"),
 				SubnetId:                 talosVpc.PublicSubnetIds.Index(pulumi.Int(i)),
 				Tags: pulumi.StringMap{
-					"Name": pulumi.Sprintf("talosCp-0%d", i),
+					"Name":  pulumi.Sprintf("talosCp-0%d", i),
+					"Owner": pulumi.String(ownerTagValue),
+					"Team":  pulumi.String(teamTagValue),
 				},
 				VpcSecurityGroupIds: pulumi.StringArray{talosSg.ID()},
 			})
@@ -224,6 +247,7 @@ func main() {
 		ctx.Export("cpInstancePubIps", pulumi.StringArray(cpInstancePubIps))
 
 		// Attach control plane instances to load balancer
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/elb/attachment/
 		for i := 0; i < 3; i++ {
 			_, err := elb.NewAttachment(ctx, fmt.Sprintf("lbAttachment-0%d", i), &elb.AttachmentArgs{
 				Elb:      talosLb.ID(),
@@ -235,10 +259,15 @@ func main() {
 		}
 
 		// Build the Talos cluster configuration
+		// First, generate machine secrets
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineSecrets.go
 		talosMachineSecrets, err := talos.NewTalosMachineSecrets(ctx, "talosMs", nil)
 		if err != nil {
 			log.Printf("error generating machine secrets: %s", err.Error())
 		}
+
+		// Generate a client configuration
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosClientConfiguration.go
 		talosCfg, err := talos.NewTalosClientConfiguration(ctx, "talosCfg", &talos.TalosClientConfigurationArgs{
 			ClusterName:    pulumi.String("talos-cluster"),
 			MachineSecrets: talosMachineSecrets.MachineSecrets,
@@ -248,6 +277,9 @@ func main() {
 		if err != nil {
 			log.Printf("error creating client configuration: %s", err.Error())
 		}
+
+		// Create the machine configuration for the control plane nodes
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationControlplane.go
 		talosCpMachineCfg, err := talos.NewTalosMachineConfigurationControlplane(ctx, "cpMachineCfg", &talos.TalosMachineConfigurationControlplaneArgs{
 			ClusterName:     talosCfg.ClusterName,
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
@@ -258,6 +290,9 @@ func main() {
 		if err != nil {
 			log.Printf("error creating control plane configuration: %s", err.Error())
 		}
+
+		// Create the machine configuration for the worker nodes
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationWorker.go
 		talosWkrMachineCfg, err := talos.NewTalosMachineConfigurationWorker(ctx, "wkrMachineCfg", &talos.TalosMachineConfigurationWorkerArgs{
 			ClusterName:     talosCfg.ClusterName,
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
@@ -270,6 +305,7 @@ func main() {
 		}
 
 		// Apply the machine configuration to the control plane nodes
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationApply.go
 		for i := 0; i < len(cpInstancePubIps); i++ {
 			_, err = talos.NewTalosMachineConfigurationApply(ctx, fmt.Sprintf("cpConfigApply-0%d", i), &talos.TalosMachineConfigurationApplyArgs{
 				TalosConfig:          talosCfg.TalosConfig,
@@ -293,7 +329,9 @@ func main() {
 				InstanceType:             pulumi.String("m5a.xlarge"),
 				SubnetId:                 talosVpc.PublicSubnetIds.Index(pulumi.Int(i)),
 				Tags: pulumi.StringMap{
-					"Name": pulumi.Sprintf("talosWkr-0%d", i),
+					"Name":  pulumi.Sprintf("talosWkr-0%d", i),
+					"Owner": pulumi.String(ownerTagValue),
+					"Team":  pulumi.String(teamTagValue),
 				},
 				VpcSecurityGroupIds: pulumi.StringArray{talosSg.ID()},
 			})
@@ -323,6 +361,7 @@ func main() {
 		}
 
 		// Bootstrap the first control plane node
+		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineBootstrap.go
 		_, err = talos.NewTalosMachineBootstrap(ctx, "bootstrap", &talos.TalosMachineBootstrapArgs{
 			TalosConfig: talosCfg.TalosConfig,
 			Endpoint:    cpInstancePubIps[0],
