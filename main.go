@@ -49,9 +49,6 @@ func main() {
 			log.Printf("error creating security group: %s", err.Error())
 			return err
 		}
-		ctx.Export("talosVpcId", talosVpc.VpcId)
-		ctx.Export("talosPrivSubnetIds", talosVpc.PrivateSubnetIds)
-		ctx.Export("talosPubSubnetIds", talosVpc.PublicSubnetIds)
 
 		// Create a security group for the Talos cluster
 		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/securitygroup/
@@ -69,7 +66,6 @@ func main() {
 			log.Printf("error creating security group: %s", err.Error())
 			return err
 		}
-		ctx.Export("talosSgId", talosSg.ID())
 
 		// Add rules to Talos security group
 		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/securitygrouprule/
@@ -144,7 +140,6 @@ func main() {
 			log.Printf("error creating security group: %s", err.Error())
 			return err
 		}
-		ctx.Export("talosLbSgId", talosLbSg.ID())
 
 		// Allow K8s API inbound to load balancer
 		_, err = ec2.NewSecurityGroupRule(ctx, "allowK8sApiLb", &ec2.SecurityGroupRuleArgs{
@@ -212,9 +207,6 @@ func main() {
 			log.Printf("error creating load balancer: %s", err.Error())
 			return err
 		}
-		ctx.Export("talosLbDnsName", talosLb.DnsName)
-		ctx.Export("talosLbArn", talosLb.Arn)
-		ctx.Export("talosLbId", talosLb.ID())
 
 		// Launch EC2 instances for the control plane nodes
 		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/instance/
@@ -242,9 +234,6 @@ func main() {
 				cpInstancePubIps[i] = instance.PublicIp
 			}
 		}
-		ctx.Export("cpInstanceIds", pulumi.StringArray(cpInstanceIds))
-		ctx.Export("cpInstancePrivIps", pulumi.StringArray(cpInstancePrivIps))
-		ctx.Export("cpInstancePubIps", pulumi.StringArray(cpInstancePubIps))
 
 		// Attach control plane instances to load balancer
 		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/elb/attachment/
@@ -343,9 +332,6 @@ func main() {
 				wkrInstancePubIps[i] = instance.PublicIp
 			}
 		}
-		ctx.Export("wkrInstanceIds", pulumi.StringArray(wkrInstanceIds))
-		ctx.Export("wkrInstancePrivIps", pulumi.StringArray(wkrInstancePrivIps))
-		ctx.Export("wkrInstancePubIps", pulumi.StringArray(wkrInstancePubIps))
 
 		// Apply the machine configuration to the worker nodes
 		for i := 0; i < len(wkrInstancePubIps); i++ {
@@ -373,6 +359,22 @@ func main() {
 
 		// Export the Talos client configuration
 		ctx.Export("talosctlCfg", talosCfg.TalosConfig)
+
+		// Uncomment the following lines for additional outputs that may be useful for troubleshooting/diagnostics
+		// ctx.Export("talosVpcId", talosVpc.VpcId)
+		// ctx.Export("talosPrivSubnetIds", talosVpc.PrivateSubnetIds)
+		// ctx.Export("talosPubSubnetIds", talosVpc.PublicSubnetIds)
+		// ctx.Export("talosSgId", talosSg.ID())
+		// ctx.Export("talosLbSgId", talosLbSg.ID())
+		// ctx.Export("talosLbDnsName", talosLb.DnsName)
+		// ctx.Export("talosLbArn", talosLb.Arn)
+		// ctx.Export("talosLbId", talosLb.ID())
+		// ctx.Export("cpInstanceIds", pulumi.StringArray(cpInstanceIds))
+		// ctx.Export("cpInstancePrivIps", pulumi.StringArray(cpInstancePrivIps))
+		// ctx.Export("cpInstancePubIps", pulumi.StringArray(cpInstancePubIps))
+		// ctx.Export("wkrInstanceIds", pulumi.StringArray(wkrInstanceIds))
+		// ctx.Export("wkrInstancePrivIps", pulumi.StringArray(wkrInstancePrivIps))
+		// ctx.Export("wkrInstancePubIps", pulumi.StringArray(wkrInstancePubIps))
 
 		return nil
 	})
