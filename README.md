@@ -8,6 +8,7 @@ Before using the contents of this repository, you will need to ensure:
 
 * You have the Pulumi CLI installed (see [here](https://www.pulumi.com/docs/get-started/install/) for more information on installing Pulumi).
 * You have a working AWS CLI installation.
+* You have a working installation of Golang.
 * You have manually installed the Pulumi provider for Talos. As of this writing, the Pulumi provider for Talos was still prerelease and needs to be installed manually; see instructions [here](https://blog.scottlowe.org/2023/02/08/installing-prerelease-pulumi-provider-talos/).
 
 ## Instructions
