@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/pulumi/pulumi-aws/sdk/v5/go/aws/ec2"
-	"github.com/pulumi/pulumi-aws/sdk/v5/go/aws/elb"
-	awsx "github.com/pulumi/pulumi-awsx/sdk/go/awsx/ec2"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ec2"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/elb"
+	awsx "github.com/pulumi/pulumi-awsx/sdk/v2/go/awsx/ec2"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
-	"github.com/siderolabs/pulumi-provider-talos/sdk/go/talos"
+	"github.com/pulumiverse/pulumi-talos/sdk/go/talos/client"
+	"github.com/pulumiverse/pulumi-talos/sdk/go/talos/machine"
 )
 
 func main() {
@@ -249,58 +250,48 @@ func main() {
 
 		// Build the Talos cluster configuration
 		// First, generate machine secrets
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineSecrets.go
-		talosMachineSecrets, err := talos.NewTalosMachineSecrets(ctx, "talosMs", nil)
-		if err != nil {
-			log.Printf("error generating machine secrets: %s", err.Error())
-		}
+		// Details: TODO FIX URL
+		// talosMachineSecrets, err := machine.NewSecrets(ctx, "talosMs", nil)
+		// if err != nil {
+		// 	log.Printf("error generating machine secrets: %s", err.Error())
+		// }
 
-		// Generate a client configuration
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosClientConfiguration.go
-		talosCfg, err := talos.NewTalosClientConfiguration(ctx, "talosCfg", &talos.TalosClientConfigurationArgs{
-			ClusterName:    pulumi.String("talos-cluster"),
-			MachineSecrets: talosMachineSecrets.MachineSecrets,
-			Endpoints:      pulumi.StringArray(cpInstancePubIps),
-			Nodes:          pulumi.StringArray{cpInstancePubIps[0]},
-		})
-		if err != nil {
-			log.Printf("error creating client configuration: %s", err.Error())
-		}
+		talosSecrets, err := machine.NewSecretsType(ctx, "talos-secrets", nil)
 
-		// Create the machine configuration for the control plane nodes
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationControlplane.go
-		talosCpMachineCfg, err := talos.NewTalosMachineConfigurationControlplane(ctx, "cpMachineCfg", &talos.TalosMachineConfigurationControlplaneArgs{
-			ClusterName:     talosCfg.ClusterName,
+		// Get machine configuration for the control plane
+		// Details: TODO FIX URL
+		talosCpCfg := machine.GetConfigurationOutput(ctx, machine.GetConfigurationOutputArgs{
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
-			MachineSecrets:  talosMachineSecrets.MachineSecrets,
-			DocsEnabled:     pulumi.Bool(false),
-			ExamplesEnabled: pulumi.Bool(false),
+			ClusterName:     pulumi.String("talos-cluster"),
+			Docs:            pulumi.BoolPtr(false),
+			Examples:        pulumi.BoolPtr(false),
+			// MachineSecrets:  talosMachineSecrets.MachineSecrets,
+			MachineSecrets: talosSecrets.ToSecretsTypeOutput().MachineSecrets(),
+			MachineType:    pulumi.String("controlplane"),
+			TalosVersion:   pulumi.String("v1.6"),
 		})
-		if err != nil {
-			log.Printf("error creating control plane configuration: %s", err.Error())
-		}
 
-		// Create the machine configuration for the worker nodes
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationWorker.go
-		talosWkrMachineCfg, err := talos.NewTalosMachineConfigurationWorker(ctx, "wkrMachineCfg", &talos.TalosMachineConfigurationWorkerArgs{
-			ClusterName:     talosCfg.ClusterName,
+		// Get machine configuration for the worker nodes
+		// Details: TODO FIX URL
+		talosWkrCfg := machine.GetConfigurationOutput(ctx, machine.GetConfigurationOutputArgs{
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
-			MachineSecrets:  talosMachineSecrets.MachineSecrets,
-			DocsEnabled:     pulumi.Bool(false),
-			ExamplesEnabled: pulumi.Bool(false),
+			ClusterName:     pulumi.String("talos-cluster"),
+			Docs:            pulumi.BoolPtr(false),
+			Examples:        pulumi.BoolPtr(false),
+			// MachineSecrets:  talosMachineSecrets.MachineSecrets,
+			MachineSecrets: talosSecrets.ToSecretsTypeOutput().MachineSecrets(),
+			MachineType:    pulumi.String("worker"),
+			TalosVersion:   pulumi.String("v1.6"),
 		})
-		if err != nil {
-			log.Printf("error creating worker configuration: %s", err.Error())
-		}
 
 		// Apply the machine configuration to the control plane nodes
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineConfigurationApply.go
+		// Details: TODO FIX URL
 		for i := 0; i < len(cpInstancePubIps); i++ {
-			_, err = talos.NewTalosMachineConfigurationApply(ctx, fmt.Sprintf("cpConfigApply-0%d", i), &talos.TalosMachineConfigurationApplyArgs{
-				TalosConfig:          talosCfg.TalosConfig,
-				MachineConfiguration: talosCpMachineCfg.MachineConfig,
-				Endpoint:             cpInstancePubIps[i],
-				Node:                 cpInstancePubIps[i],
+			_, err = machine.NewConfigurationApply(ctx, fmt.Sprintf("cpConfigApply-0%d", i), &machine.ConfigurationApplyArgs{
+				// ClientConfiguration:       talosMachineSecrets.ClientConfiguration,
+				ClientConfiguration:       talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+				MachineConfigurationInput: talosCpCfg.MachineConfiguration(),
+				Node:                      cpInstancePubIps[i],
 			})
 			if err != nil {
 				log.Printf("error applying machine configuration: %s", err.Error())
@@ -335,11 +326,11 @@ func main() {
 
 		// Apply the machine configuration to the worker nodes
 		for i := 0; i < len(wkrInstancePubIps); i++ {
-			_, err = talos.NewTalosMachineConfigurationApply(ctx, fmt.Sprintf("wkrConfigApply-0%d", i), &talos.TalosMachineConfigurationApplyArgs{
-				TalosConfig:          talosCfg.TalosConfig,
-				MachineConfiguration: talosWkrMachineCfg.MachineConfig,
-				Endpoint:             wkrInstancePubIps[i],
-				Node:                 wkrInstancePubIps[i],
+			_, err = machine.NewConfigurationApply(ctx, fmt.Sprintf("wkrConfigApply-0%d", i), &machine.ConfigurationApplyArgs{
+				// ClientConfiguration:       talosMachineSecrets.ClientConfiguration,
+				ClientConfiguration:       talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+				MachineConfigurationInput: talosWkrCfg.MachineConfiguration(),
+				Node:                      wkrInstancePubIps[i],
 			})
 			if err != nil {
 				log.Printf("error applying machine configuration: %s", err.Error())
@@ -347,18 +338,28 @@ func main() {
 		}
 
 		// Bootstrap the first control plane node
-		// Details: https://github.com/siderolabs/pulumi-provider-talos/blob/main/sdk/go/talos/talosMachineBootstrap.go
-		_, err = talos.NewTalosMachineBootstrap(ctx, "bootstrap", &talos.TalosMachineBootstrapArgs{
-			TalosConfig: talosCfg.TalosConfig,
-			Endpoint:    cpInstancePubIps[0],
-			Node:        cpInstancePubIps[0],
+		// Details: TODO FIX URL
+		_, err = machine.NewBootstrap(ctx, "bootstrap", &machine.BootstrapArgs{
+			// ClientConfiguration: talosMachineSecrets.ClientConfiguration,
+			ClientConfiguration: talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+			Node:                cpInstancePubIps[0],
 		})
 		if err != nil {
 			log.Printf("error bootstrapping first node: %s", err.Error())
 		}
 
+		// Get client configuration for the Talos cluster
+		talosClusterClientCfg := client.GetConfigurationOutput(ctx, client.GetConfigurationOutputArgs{
+			ClusterName: pulumi.String("talos-cluster"),
+			// ClientConfiguration: talosMachineSecrets.ClientConfiguration,
+			ClientConfiguration: talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+			Nodes: pulumi.StringArray{
+				cpInstancePubIps[0],
+			},
+		})
+
 		// Export the Talos client configuration
-		ctx.Export("talosctlCfg", talosCfg.TalosConfig)
+		ctx.Export("talosctlCfg", talosClusterClientCfg.ClientConfiguration())
 
 		// Uncomment the following lines for additional outputs that may be useful for troubleshooting/diagnostics
 		// ctx.Export("talosVpcId", talosVpc.VpcId)
