@@ -19,9 +19,9 @@ func main() {
 		cfg := config.New(ctx, "")
 		vpcNetworkCidr, err := cfg.Try("vpcNetworkCidr")
 		if err != nil {
-			vpcNetworkCidr = "10.0.0.0/16"
+			vpcNetworkCidr = "10.1.0.0/18"
 		}
-		talosAmi := cfg.Require("talosAmi")
+		// talosAmi := cfg.Require("talosAmi")
 		ownerTagValue, err := config.Try(ctx, "ownerTagValue")
 		if err != nil {
 			ownerTagValue = "nobody@nowhere.com"
@@ -29,6 +29,10 @@ func main() {
 		teamTagValue, err := config.Try(ctx, "teamTagValue")
 		if err != nil {
 			teamTagValue = "TeamOfOne"
+		}
+		inboundAllowedIPs, err := config.Try(ctx, "allowedips")
+		if err != nil {
+			inboundAllowedIPs = "174.51.35.206/32"
 		}
 
 		// Create a new VPC, subnets, and associated infrastructure
@@ -90,7 +94,7 @@ func main() {
 			FromPort:        pulumi.Int(6443),
 			ToPort:          pulumi.Int(6443),
 			Protocol:        pulumi.String("tcp"),
-			CidrBlocks:      pulumi.StringArray{pulumi.String("0.0.0.0/0")},
+			CidrBlocks:      pulumi.StringArray{pulumi.String(inboundAllowedIPs)},
 			SecurityGroupId: talosSg.ID(),
 		})
 		if err != nil {
@@ -102,9 +106,9 @@ func main() {
 		_, err = ec2.NewSecurityGroupRule(ctx, "allowTalosApi", &ec2.SecurityGroupRuleArgs{
 			Type:            pulumi.String("ingress"),
 			FromPort:        pulumi.Int(50000),
-			ToPort:          pulumi.Int(50001),
+			ToPort:          pulumi.Int(50000),
 			Protocol:        pulumi.String("tcp"),
-			CidrBlocks:      pulumi.StringArray{pulumi.String("0.0.0.0/0")},
+			CidrBlocks:      pulumi.StringArray{pulumi.String(inboundAllowedIPs)},
 			SecurityGroupId: talosSg.ID(),
 		})
 		if err != nil {
@@ -148,7 +152,7 @@ func main() {
 			FromPort:        pulumi.Int(6443),
 			ToPort:          pulumi.Int(6443),
 			Protocol:        pulumi.String("tcp"),
-			CidrBlocks:      pulumi.StringArray{pulumi.String("0.0.0.0/0")},
+			CidrBlocks:      pulumi.StringArray{pulumi.String(inboundAllowedIPs)},
 			SecurityGroupId: talosLbSg.ID(),
 		})
 		if err != nil {
@@ -209,6 +213,22 @@ func main() {
 			return err
 		}
 
+		// Get ID for the official Talos Linux AMI
+		// Details: TODO FIX URL
+		talosAmi, err := ec2.LookupAmi(ctx, &ec2.LookupAmiArgs{
+			Owners:     []string{"540036508848"},
+			MostRecent: pulumi.BoolRef(true),
+			Filters: []ec2.GetAmiFilter{
+				{Name: "name", Values: []string{"talos-v1.8*"}},
+				{Name: "root-device-type", Values: []string{"ebs"}},
+				{Name: "virtualization-type", Values: []string{"hvm"}},
+				{Name: "architecture", Values: []string{"x86_64"}},
+			},
+		})
+		if err != nil {
+			log.Printf("error looking up Talos Linux AMI: %s", err.Error())
+		}
+
 		// Launch EC2 instances for the control plane nodes
 		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/instance/
 		cpInstanceIds := make([]pulumi.StringInput, 3)
@@ -216,7 +236,7 @@ func main() {
 		cpInstancePubIps := make([]pulumi.StringInput, 3)
 		for i := 0; i < 3; i++ {
 			instance, err := ec2.NewInstance(ctx, fmt.Sprintf("talosCp-0%d", i), &ec2.InstanceArgs{
-				Ami:                      pulumi.String(talosAmi),
+				Ami:                      pulumi.String(talosAmi.Id),
 				AssociatePublicIpAddress: pulumi.Bool(true),
 				InstanceType:             pulumi.String("m5a.xlarge"),
 				SubnetId:                 talosVpc.PublicSubnetIds.Index(pulumi.Int(i)),
@@ -251,12 +271,10 @@ func main() {
 		// Build the Talos cluster configuration
 		// First, generate machine secrets
 		// Details: TODO FIX URL
-		// talosMachineSecrets, err := machine.NewSecrets(ctx, "talosMs", nil)
-		// if err != nil {
-		// 	log.Printf("error generating machine secrets: %s", err.Error())
-		// }
-
-		talosSecrets, err := machine.NewSecretsType(ctx, "talos-secrets", nil)
+		talosSecrets, err := machine.NewSecrets(ctx, "talos-secrets", nil)
+		if err != nil {
+			log.Printf("error generating machine secrets: %s", err.Error())
+		}
 
 		// Get machine configuration for the control plane
 		// Details: TODO FIX URL
@@ -265,10 +283,14 @@ func main() {
 			ClusterName:     pulumi.String("talos-cluster"),
 			Docs:            pulumi.BoolPtr(false),
 			Examples:        pulumi.BoolPtr(false),
-			// MachineSecrets:  talosMachineSecrets.MachineSecrets,
-			MachineSecrets: talosSecrets.ToSecretsTypeOutput().MachineSecrets(),
-			MachineType:    pulumi.String("controlplane"),
-			TalosVersion:   pulumi.String("v1.6"),
+			MachineSecrets: machine.MachineSecretsArgs{
+				Certs:      talosSecrets.MachineSecrets.Certs(),
+				Cluster:    talosSecrets.MachineSecrets.Cluster(),
+				Secrets:    talosSecrets.MachineSecrets.Secrets(),
+				Trustdinfo: talosSecrets.MachineSecrets.Trustdinfo(),
+			},
+			MachineType:  pulumi.String("controlplane"),
+			TalosVersion: pulumi.String("v1.8"),
 		})
 
 		// Get machine configuration for the worker nodes
@@ -278,24 +300,56 @@ func main() {
 			ClusterName:     pulumi.String("talos-cluster"),
 			Docs:            pulumi.BoolPtr(false),
 			Examples:        pulumi.BoolPtr(false),
-			// MachineSecrets:  talosMachineSecrets.MachineSecrets,
-			MachineSecrets: talosSecrets.ToSecretsTypeOutput().MachineSecrets(),
-			MachineType:    pulumi.String("worker"),
-			TalosVersion:   pulumi.String("v1.6"),
+			MachineSecrets: machine.MachineSecretsArgs{
+				Certs:      talosSecrets.MachineSecrets.Certs(),
+				Cluster:    talosSecrets.MachineSecrets.Cluster(),
+				Secrets:    talosSecrets.MachineSecrets.Secrets(),
+				Trustdinfo: talosSecrets.MachineSecrets.Trustdinfo(),
+			},
+			MachineType:  pulumi.String("worker"),
+			TalosVersion: pulumi.String("v1.8"),
 		})
 
 		// Apply the machine configuration to the control plane nodes
+		// Not using a loop here because we need to create a dependency on these resources
 		// Details: TODO FIX URL
-		for i := 0; i < len(cpInstancePubIps); i++ {
-			_, err = machine.NewConfigurationApply(ctx, fmt.Sprintf("cpConfigApply-0%d", i), &machine.ConfigurationApplyArgs{
-				// ClientConfiguration:       talosMachineSecrets.ClientConfiguration,
-				ClientConfiguration:       talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
-				MachineConfigurationInput: talosCpCfg.MachineConfiguration(),
-				Node:                      cpInstancePubIps[i],
-			})
-			if err != nil {
-				log.Printf("error applying machine configuration: %s", err.Error())
-			}
+		_, err = machine.NewConfigurationApply(ctx, "cpConfigApply-00", &machine.ConfigurationApplyArgs{
+			ClientConfiguration: machine.ClientConfigurationArgs{
+				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+				ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+				ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+			},
+			MachineConfigurationInput: talosCpCfg.MachineConfiguration(),
+			Node:                      cpInstancePubIps[0],
+		})
+		if err != nil {
+			log.Printf("error applying machine configuration: %s", err.Error())
+		}
+
+		_, err = machine.NewConfigurationApply(ctx, "cpConfigApply-01", &machine.ConfigurationApplyArgs{
+			ClientConfiguration: machine.ClientConfigurationArgs{
+				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+				ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+				ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+			},
+			MachineConfigurationInput: talosCpCfg.MachineConfiguration(),
+			Node:                      cpInstancePubIps[1],
+		})
+		if err != nil {
+			log.Printf("error applying machine configuration: %s", err.Error())
+		}
+
+		_, err = machine.NewConfigurationApply(ctx, "cpConfigApply-02", &machine.ConfigurationApplyArgs{
+			ClientConfiguration: machine.ClientConfigurationArgs{
+				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+				ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+				ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+			},
+			MachineConfigurationInput: talosCpCfg.MachineConfiguration(),
+			Node:                      cpInstancePubIps[2],
+		})
+		if err != nil {
+			log.Printf("error applying machine configuration: %s", err.Error())
 		}
 
 		// Launch EC2 instances for the worker nodes
@@ -304,7 +358,7 @@ func main() {
 		wkrInstancePubIps := make([]pulumi.StringInput, 3)
 		for i := 0; i < 3; i++ {
 			instance, err := ec2.NewInstance(ctx, fmt.Sprintf("talosWkr-0%d", i), &ec2.InstanceArgs{
-				Ami:                      pulumi.String(talosAmi),
+				Ami:                      pulumi.String(talosAmi.Id),
 				AssociatePublicIpAddress: pulumi.Bool(true),
 				InstanceType:             pulumi.String("m5a.xlarge"),
 				SubnetId:                 talosVpc.PublicSubnetIds.Index(pulumi.Int(i)),
@@ -327,8 +381,11 @@ func main() {
 		// Apply the machine configuration to the worker nodes
 		for i := 0; i < len(wkrInstancePubIps); i++ {
 			_, err = machine.NewConfigurationApply(ctx, fmt.Sprintf("wkrConfigApply-0%d", i), &machine.ConfigurationApplyArgs{
-				// ClientConfiguration:       talosMachineSecrets.ClientConfiguration,
-				ClientConfiguration:       talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+				ClientConfiguration: machine.ClientConfigurationArgs{
+					CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+					ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+					ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+				},
 				MachineConfigurationInput: talosWkrCfg.MachineConfiguration(),
 				Node:                      wkrInstancePubIps[i],
 			})
@@ -339,30 +396,35 @@ func main() {
 
 		// Bootstrap the first control plane node
 		// Details: TODO FIX URL
-		_, err = machine.NewBootstrap(ctx, "bootstrap", &machine.BootstrapArgs{
-			// ClientConfiguration: talosMachineSecrets.ClientConfiguration,
-			ClientConfiguration: talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
-			Node:                cpInstancePubIps[0],
-		})
-		if err != nil {
-			log.Printf("error bootstrapping first node: %s", err.Error())
-		}
+		// _, err = machine.NewBootstrap(ctx, "bootstrap", &machine.BootstrapArgs{
+		// 	ClientConfiguration: machine.ClientConfigurationArgs{
+		// 		CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+		// 		ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+		// 		ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+		// 	},
+		// 	Node: cpInstancePubIps[0],
+		// }, pulumi.DependsOn([]pulumi.Resource{cpConfigApply00, cpConfigApply01, cpConfigApply02}))
+		// if err != nil {
+		// 	log.Printf("error bootstrapping first node: %s", err.Error())
+		// }
 
 		// Get client configuration for the Talos cluster
 		talosClusterClientCfg := client.GetConfigurationOutput(ctx, client.GetConfigurationOutputArgs{
 			ClusterName: pulumi.String("talos-cluster"),
-			// ClientConfiguration: talosMachineSecrets.ClientConfiguration,
-			ClientConfiguration: talosSecrets.ToSecretsTypeOutput().ClientConfiguration(),
+			ClientConfiguration: client.GetConfigurationClientConfigurationArgs{
+				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
+				ClientCertificate: talosSecrets.ClientConfiguration.ClientCertificate(),
+				ClientKey:         talosSecrets.ClientConfiguration.ClientKey(),
+			},
 			Nodes: pulumi.StringArray{
 				cpInstancePubIps[0],
 			},
 		})
 
 		// Export the Talos client configuration
-		ctx.Export("talosctlCfg", talosClusterClientCfg.ClientConfiguration())
-
+		ctx.Export("talosctlCfg", talosClusterClientCfg.TalosConfig())
 		// Uncomment the following lines for additional outputs that may be useful for troubleshooting/diagnostics
-		// ctx.Export("talosVpcId", talosVpc.VpcId)
+		ctx.Export("talosVpcId", talosVpc.VpcId)
 		// ctx.Export("talosPrivSubnetIds", talosVpc.PrivateSubnetIds)
 		// ctx.Export("talosPubSubnetIds", talosVpc.PublicSubnetIds)
 		// ctx.Export("talosSgId", talosSg.ID())
@@ -372,10 +434,10 @@ func main() {
 		// ctx.Export("talosLbId", talosLb.ID())
 		// ctx.Export("cpInstanceIds", pulumi.StringArray(cpInstanceIds))
 		// ctx.Export("cpInstancePrivIps", pulumi.StringArray(cpInstancePrivIps))
-		// ctx.Export("cpInstancePubIps", pulumi.StringArray(cpInstancePubIps))
+		ctx.Export("cpInstancePubIps", pulumi.StringArray(cpInstancePubIps))
 		// ctx.Export("wkrInstanceIds", pulumi.StringArray(wkrInstanceIds))
 		// ctx.Export("wkrInstancePrivIps", pulumi.StringArray(wkrInstancePrivIps))
-		// ctx.Export("wkrInstancePubIps", pulumi.StringArray(wkrInstancePubIps))
+		ctx.Export("wkrInstancePubIps", pulumi.StringArray(wkrInstancePubIps))
 
 		return nil
 	})
