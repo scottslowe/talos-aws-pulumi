@@ -214,7 +214,7 @@ func main() {
 		}
 
 		// Get ID for the official Talos Linux AMI
-		// Details: TODO FIX URL
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/getami/
 		talosAmi, err := ec2.LookupAmi(ctx, &ec2.LookupAmiArgs{
 			Owners:     []string{"540036508848"},
 			MostRecent: pulumi.BoolRef(true),
@@ -270,14 +270,14 @@ func main() {
 
 		// Build the Talos cluster configuration
 		// First, generate machine secrets
-		// Details: TODO FIX URL
+		// Details: https://www.pulumi.com/registry/packages/talos/api-docs/machine/secrets/
 		talosSecrets, err := machine.NewSecrets(ctx, "talos-secrets", nil)
 		if err != nil {
 			log.Printf("error generating machine secrets: %s", err.Error())
 		}
 
 		// Get machine configuration for the control plane
-		// Details: TODO FIX URL
+		// Details: https://www.pulumi.com/registry/packages/talos/api-docs/machine/getconfiguration/
 		talosCpCfg := machine.GetConfigurationOutput(ctx, machine.GetConfigurationOutputArgs{
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
 			ClusterName:     pulumi.String("talos-cluster"),
@@ -294,7 +294,6 @@ func main() {
 		})
 
 		// Get machine configuration for the worker nodes
-		// Details: TODO FIX URL
 		talosWkrCfg := machine.GetConfigurationOutput(ctx, machine.GetConfigurationOutputArgs{
 			ClusterEndpoint: pulumi.Sprintf("https://%v:6443", talosLb.DnsName),
 			ClusterName:     pulumi.String("talos-cluster"),
@@ -312,7 +311,7 @@ func main() {
 
 		// Apply the machine configuration to the control plane nodes
 		// Not using a loop here because we need to create a dependency on these resources
-		// Details: TODO FIX URL
+		// Details: https://www.pulumi.com/registry/packages/talos/api-docs/machine/configurationapply/
 		cpConfigApply00, err := machine.NewConfigurationApply(ctx, "cpConfigApply-00", &machine.ConfigurationApplyArgs{
 			ClientConfiguration: machine.ClientConfigurationArgs{
 				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
@@ -353,6 +352,7 @@ func main() {
 		}
 
 		// Launch EC2 instances for the worker nodes
+		// Details: https://www.pulumi.com/registry/packages/aws/api-docs/ec2/instance/
 		wkrInstanceIds := make([]pulumi.StringInput, 3)
 		wkrInstancePrivIps := make([]pulumi.StringInput, 3)
 		wkrInstancePubIps := make([]pulumi.StringInput, 3)
@@ -395,7 +395,7 @@ func main() {
 		}
 
 		// Bootstrap the first control plane node
-		// Details: TODO FIX URL
+		// Details: https://www.pulumi.com/registry/packages/talos/api-docs/machine/bootstrap/
 		_, err = machine.NewBootstrap(ctx, "bootstrap", &machine.BootstrapArgs{
 			ClientConfiguration: machine.ClientConfigurationArgs{
 				CaCertificate:     talosSecrets.ClientConfiguration.CaCertificate(),
@@ -419,12 +419,15 @@ func main() {
 			Nodes: pulumi.StringArray{
 				cpInstancePubIps[0],
 			},
+			Endpoints: pulumi.StringArray{
+				cpInstancePubIps[0],
+			},
 		})
 
 		// Export the Talos client configuration
 		ctx.Export("talosctlCfg", talosClusterClientCfg.TalosConfig())
 		// Uncomment the following lines for additional outputs that may be useful for troubleshooting/diagnostics
-		ctx.Export("talosVpcId", talosVpc.VpcId)
+		// ctx.Export("talosVpcId", talosVpc.VpcId)
 		// ctx.Export("talosPrivSubnetIds", talosVpc.PrivateSubnetIds)
 		// ctx.Export("talosPubSubnetIds", talosVpc.PublicSubnetIds)
 		// ctx.Export("talosSgId", talosSg.ID())
